@@ -5,6 +5,7 @@ import math
 import os.path
 import struct
 import sys
+import hashlib
 
 import png
 
@@ -135,8 +136,8 @@ class Bffnt:
     cmap_sections = []
 
     def __init__(self, verbose=False, debug=False, load_order='<'):
-        self.verbose = verbose
-        self.debug = debug
+        self.verbose = True
+        self.debug = True
         self.load_order = load_order
 
     def read(self, filename):
@@ -184,8 +185,8 @@ class Bffnt:
             self._parse_cmap_data(info, data[position:position + info['size'] - CMAP_HEADER_SIZE])
 
         # convert pixels to RGBA8
-        position = self.tglp['sheetOffset']
-        self._parse_tglp_data(data[position:position + self.tglp['sheet']['size']])
+        position = self.tglp['sheetOffset']        
+        self._parse_tglp_data(data)
 
     def load(self, json_filename):
         json_data = json.load(open(json_filename, 'r'))
@@ -312,35 +313,43 @@ class Bffnt:
         }, indent=2, sort_keys=True))
         json_file_.close()
 
-        # save sheet bitmaps
+        # save single  sheet bitmap
+        png_data = []         
+        png_height = 0
         for i in range(self.tglp['sheetCount']):
             sheet = self.tglp['sheets'][i]
-            width = sheet['width']
-            height = sheet['height']
-            png_data = []
-            for y in range(height):
+            width = sheet['width']            
+            height = sheet['height']       
+            print('Sheet #%d: %dx%d' % (i,width,height))
+            png_width = width
+            png_height = png_height + height
+            for y in range(height):                
                 row = []
-                for x in range(width):
+                for x in range(width):                                        
                     for color in sheet['data'][x + (y * width)]:
-                        row.append(color)
-
-                png_data.append(row)
-
-            file_ = open('%s_sheet%d.png' % (basename_, i), 'wb')
-            writer = png.Writer(width, height, alpha=True)
-            writer.write(file_, png_data)
-            file_.close()
+                        row.append(color)                       
+                png_data.append(row)            
+        
+        file_name_ = ('%s.png' % basename)        
+        file_ = open(file_name_, 'wb')
+        print('PNG: %dx%d' % (png_width,png_height))
+        writer = png.Writer(width, png_height, alpha=True)
+        writer.write(file_, png_data)
+        file_.close()
 
     def save(self, filename):
-        file_ = open(filename, 'wb')
-        basename_ = os.path.splitext(os.path.basename(filename))[0]
-        section_count = 0
 
         bom = 0
         if self.order == '>':
             bom = 0xFFFE
         elif self.order == '<':
             bom = 0xFEFF
+
+        file_ = open('%s.new' % filename, 'wb')
+        basename_ = os.path.splitext(os.path.basename(filename))[0]
+        section_count = 0
+
+        
 
         # write header
         file_size_pos = 0x0C
@@ -645,19 +654,21 @@ class Bffnt:
 
     def _parse_tglp_data(self, data):
         position = 0
-        self.tglp['sheets'] = []
-        format_ = self.tglp['sheet']['format']
-        for i in range(self.tglp['sheetCount']):
-            sheet = data[position:position + self.tglp['sheet']['size']]
+        self.tglp['sheets'] = []        
+        format_ = self.tglp['sheet']['format']        
+        for i in range(self.tglp['sheetCount']):                                    
+            sheet = data[position:position + self.tglp['sheet']['size']]            
+            print('TGLP Sheet # %d (%s)  ' % (i, hashlib.sha224(sheet).hexdigest()))            
             if format_ == FORMAT_ETC1 or format_ == FORMAT_ETC1A4:
                 bmp_data = self._decompress_etc1(sheet)
-            else:
+            else:                
                 bmp_data = self._sheet_to_bitmap(sheet)
             self.tglp['sheets'].append({
                 'width': self.tglp['sheet']['width'],
                 'height': self.tglp['sheet']['height'],
                 'data': bmp_data
-            })
+            })     
+            position = position + self.tglp['sheet']['size']            
 
     def _decompress_etc1(self, data):
         width = self.tglp['sheet']['width']
@@ -870,7 +881,7 @@ class Bffnt:
 
         # rrrrrrrr gggggggg bbbbbbbb aaaaaaaa
         if format_ == FORMAT_RGBA8:
-            red, green, blue, alpha = struct.unpack('4B', data[index * 4:index * 4 + 4])
+            red, green, blue, alpha = struct.unpack('4B', data[index * 4:index * 4 + 4])                        
 
         # rrrrrrrr gggggggg bbbbbbbb
         elif format_ == FORMAT_RGB8:
@@ -900,9 +911,9 @@ class Bffnt:
             b1, b2 = struct.unpack('2B', data[index * 2:index * 2 + 2])
 
             red = ((b1 >> 4) & 0x0F) * 0x11
-            green = (b1 & 0x0F) * 0x11
+            alpha = (b1 & 0x0F) * 0x11
             blue = ((b2 >> 4) & 0x0F) * 0x11
-            alpha = (b2 & 0x0F) * 0x11
+            green = (b2 & 0x0F) * 0x11            
 
         # llllllll aaaaaaaa
         elif format_ == FORMAT_LA8:
